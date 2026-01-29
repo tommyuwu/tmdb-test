@@ -11,6 +11,8 @@ import com.sodep.test.mapper.MovieMapper;
 import com.sodep.test.repository.MovieRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
@@ -19,6 +21,7 @@ import org.springframework.web.client.ResourceAccessException;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Slf4j
 @Service
@@ -30,13 +33,32 @@ public class MovieServices {
     private final MovieMapper mapper;
     private final MovieRepository repository;
 
+    private final AtomicBoolean syncCancelled = new AtomicBoolean(false);
+
+    public Page<Movie> getMovies(Pageable pageable) {
+        return repository.findAll(pageable);
+    }
+
+    public boolean cancelSync() {
+        if (syncCancelled.compareAndSet(false, true)) {
+            log.info("Sync cancellation requested");
+            return true;
+        }
+        return false;
+    }
+
     public BatchResult sync(Integer limit) {
+        syncCancelled.set(false);
         log.info("Starting sync{}", limit != null ? " (limit=%d)".formatted(limit) : "");
         List<ProcessingResult> allResults = new ArrayList<>();
         int page = 1;
         boolean hasMore = true;
 
         while (hasMore) {
+            if (syncCancelled.get()) {
+                log.info("Sync cancelled after processing {} results", allResults.size());
+                break;
+            }
             try {
                 MoviePageResponse response = apiClient.fetchPage(page);
                 List<MovieDto> movies = response.results();
